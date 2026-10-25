@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "RT60 Research Project"
+description = "An interactive, presentation-ready research website explaining an embedded reverberation-time measurement project, its signal-processing pipeline, research gap, objectives, and contributions."
+version = "1.0.0"
+id = "artifacts/rt60-research"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25452
+
+[services.development]
+run = "pnpm --filter @workspace/rt60-research run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/rt60-research", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/rt60-research/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25452"
+BASE_PATH = "/"
