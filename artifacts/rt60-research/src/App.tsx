@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
-import { ArrowDownRight, ArrowLeft, ArrowRight, AudioLines, ChevronDown, CircleHelp, CircuitBoard, Clock3, Cpu, FileText, Menu, MoveUpRight, Waves, X } from 'lucide-react';
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, AudioLines, ChevronDown, CircleHelp, CircuitBoard, Clock3, Cpu, FileText, Menu, MoveUpRight, Play, RotateCcw, SlidersHorizontal, Waves, X } from 'lucide-react';
 import { type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -12,9 +12,10 @@ const queryClient = new QueryClient();
 
 const navItems = [
   { href: '/', label: 'Overview', number: '01' },
-  { href: '/method', label: 'Method', number: '02' },
-  { href: '/research', label: 'Research', number: '03' },
-  { href: '/contributions', label: 'Contributions', number: '04' },
+  { href: '/lab', label: 'Room lab', number: '02' },
+  { href: '/method', label: 'Method', number: '03' },
+  { href: '/research', label: 'Research', number: '04' },
+  { href: '/contributions', label: 'Contributions', number: '05' },
 ];
 
 function Shell({ children }: { children: ReactNode }) {
@@ -89,7 +90,7 @@ function Overview() {
         <Eyebrow>ROOM ACOUSTICS / EMBEDDED DSP</Eyebrow>
         <h1 className="hero-title">A room leaves<br />a <em>trace.</em></h1>
         <p className="hero-lede">Can a small embedded instrument read how long sound stays in a room—and show exactly where numerical precision shapes that answer?</p>
-        <div className="hero-actions"><Link href="/method" className="button-primary">Follow the signal <ArrowRight size={16} /></Link><Link href="/research" className="text-link">Explore the research <ArrowDownRight size={16} /></Link></div>
+        <div className="hero-actions"><Link href="/lab" className="button-primary">Open the room lab <ArrowRight size={16} /></Link><Link href="/method" className="text-link">Follow the signal <ArrowDownRight size={16} /></Link></div>
         <div className="hero-footnote"><span className="tiny-rule" /> PROPOSED INSTRUMENT · SIMULATION RESULTS REPORTED</div>
       </div>
       <div className="hero-art reveal reveal-delay">
@@ -145,6 +146,250 @@ function Overview() {
   </Shell>;
 }
 
+const frequencyBands = [125, 250, 500, 1000, 2000, 4000] as const;
+
+const materials = {
+  concrete: { label: 'Bare concrete', alpha: [0.01, 0.01, 0.015, 0.02, 0.02, 0.03] },
+  plaster: { label: 'Painted plaster', alpha: [0.02, 0.02, 0.03, 0.04, 0.05, 0.07] },
+  curtains: { label: 'Heavy curtains', alpha: [0.06, 0.10, 0.20, 0.35, 0.55, 0.70] },
+  panels: { label: 'Acoustic panels', alpha: [0.10, 0.25, 0.60, 0.90, 0.95, 0.90] },
+  carpet: { label: 'Carpet on slab', alpha: [0.02, 0.06, 0.14, 0.37, 0.60, 0.65] },
+  timber: { label: 'Timber floor', alpha: [0.15, 0.11, 0.10, 0.07, 0.06, 0.07] },
+  acousticTile: { label: 'Acoustic ceiling tile', alpha: [0.10, 0.20, 0.65, 0.80, 0.75, 0.65] },
+} as const;
+
+type MaterialKey = keyof typeof materials;
+type RoomSettings = {
+  length: number;
+  width: number;
+  height: number;
+  frequency: number;
+  walls: MaterialKey;
+  floor: MaterialKey;
+  ceiling: MaterialKey;
+};
+
+const initialRoom: RoomSettings = {
+  length: 8,
+  width: 6,
+  height: 3,
+  frequency: 1000,
+  walls: 'plaster',
+  floor: 'timber',
+  ceiling: 'acousticTile',
+};
+
+const roomPresets: { label: string; settings: Pick<RoomSettings, 'length' | 'width' | 'height' | 'walls' | 'floor' | 'ceiling'> }[] = [
+  { label: 'Classroom', settings: { length: 9, width: 7, height: 3.2, walls: 'plaster', floor: 'timber', ceiling: 'acousticTile' } },
+  { label: 'Voice studio', settings: { length: 6, width: 4.5, height: 2.7, walls: 'panels', floor: 'carpet', ceiling: 'acousticTile' } },
+  { label: 'Hall', settings: { length: 22, width: 14, height: 8, walls: 'plaster', floor: 'timber', ceiling: 'concrete' } },
+];
+
+const materialChoices: Record<'walls' | 'floor' | 'ceiling', MaterialKey[]> = {
+  walls: ['plaster', 'concrete', 'panels', 'curtains'],
+  floor: ['timber', 'concrete', 'carpet'],
+  ceiling: ['acousticTile', 'concrete', 'plaster', 'panels'],
+};
+
+function calculateRoom(room: RoomSettings) {
+  const bandIndex = Math.max(0, frequencyBands.indexOf(room.frequency as (typeof frequencyBands)[number]));
+  const floorArea = room.length * room.width;
+  const wallArea = 2 * room.height * (room.length + room.width);
+  const surfaceArea = 2 * floorArea + wallArea;
+  const volume = floorArea * room.height;
+  const absorptionArea =
+    floorArea * materials[room.floor].alpha[bandIndex] +
+    floorArea * materials[room.ceiling].alpha[bandIndex] +
+    wallArea * materials[room.walls].alpha[bandIndex];
+  const meanAbsorption = Math.min(absorptionArea / surfaceArea, 0.99);
+  const sabine = 0.161 * volume / Math.max(absorptionArea, 0.01);
+  const eyring = 0.161 * volume / Math.max(-surfaceArea * Math.log(1 - meanAbsorption), 0.01);
+
+  return { volume, surfaceArea, absorptionArea, meanAbsorption, sabine, eyring, bandIndex };
+}
+
+function RangeControl({ label, value, min, max, step, unit, onChange }: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  onChange: (value: number) => void;
+}) {
+  return <label className="lab-range">
+    <span className="lab-range-heading"><span>{label}</span><output>{value.toFixed(1)} <small>{unit}</small></output></span>
+    <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+    <span className="lab-range-limits"><span>{min} {unit}</span><span>{max} {unit}</span></span>
+  </label>;
+}
+
+function MaterialSelect({ label, value, choices, onChange }: {
+  label: string;
+  value: MaterialKey;
+  choices: MaterialKey[];
+  onChange: (value: MaterialKey) => void;
+}) {
+  return <label className="lab-select">
+    <span>{label}</span>
+    <select value={value} onChange={(event) => onChange(event.target.value as MaterialKey)}>
+      {choices.map((key) => <option key={key} value={key}>{materials[key].label}</option>)}
+    </select>
+  </label>;
+}
+
+function RoomVisual({ room, bandIndex, pulse, onPing }: {
+  room: RoomSettings;
+  bandIndex: number;
+  pulse: number;
+  onPing: () => void;
+}) {
+  const wallAlpha = materials[room.walls].alpha[bandIndex];
+  const floorAlpha = materials[room.floor].alpha[bandIndex];
+  const ceilingAlpha = materials[room.ceiling].alpha[bandIndex];
+  return <div className="room-visual-wrap">
+    <svg className="room-visual" viewBox="0 0 520 300" role="img" aria-label={`Room model, ${room.length.toFixed(1)} by ${room.width.toFixed(1)} by ${room.height.toFixed(1)} metres. Surface colour indicates absorption at ${room.frequency} hertz.`}>
+      <defs>
+        <linearGradient id="room-wall-fill" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0" stopColor="#9cecf5" stopOpacity={0.08 + wallAlpha * 0.2} />
+          <stop offset="1" stopColor="#43b7c9" stopOpacity={0.15 + wallAlpha * 0.42} />
+        </linearGradient>
+        <linearGradient id="room-floor-fill" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0" stopColor="#74d8e5" stopOpacity={0.08 + floorAlpha * 0.18} />
+          <stop offset="1" stopColor="#74d8e5" stopOpacity={0.16 + floorAlpha * 0.5} />
+        </linearGradient>
+      </defs>
+      <path d="M88 204 242 136 434 178 278 248Z" fill="url(#room-floor-fill)" />
+      <path d="M88 204V112L242 48V136Z" fill="url(#room-wall-fill)" />
+      <path d="M242 136V48L434 90V178Z" fill={`rgba(111, 211, 225, ${0.1 + ceilingAlpha * 0.32})`} />
+      <g className="room-edges">
+        <path d="M88 112 280 154 434 90M88 112 242 48 434 90M242 48V136M434 90V178M88 112V204M242 136 88 204M242 136 434 178M88 204 278 248 434 178" />
+        <path d="M139 182V91M338 218V129" className="room-measure-line" />
+      </g>
+      {pulse > 0 && <g className="room-pulse" key={pulse} transform="translate(250 174)">
+        <circle r="18" className="room-pulse-ring pulse-one" />
+        <circle r="18" className="room-pulse-ring pulse-two" />
+        <circle r="18" className="room-pulse-ring pulse-three" />
+      </g>}
+      <circle cx="250" cy="174" r="5" className="room-source" />
+      <circle cx="250" cy="174" r="11" className="room-source-halo" />
+      <text x="101" y="229">{room.length.toFixed(1)} m</text>
+      <text x="347" y="231">{room.width.toFixed(1)} m</text>
+      <text x="98" y="106">{room.height.toFixed(1)} m</text>
+      <text x="270" y="164" className="room-source-label">SOURCE</text>
+    </svg>
+    <div className="room-visual-footer">
+      <span><i className="surface-dot wall-dot" /> Walls · α {wallAlpha.toFixed(2)}</span>
+      <span><i className="surface-dot floor-dot" /> Floor · α {floorAlpha.toFixed(2)}</span>
+      <span><i className="surface-dot ceiling-dot" /> Ceiling · α {ceilingAlpha.toFixed(2)}</span>
+      <button className="ping-button" type="button" onClick={onPing}><Play size={13} fill="currentColor" /> Ping the room</button>
+    </div>
+  </div>;
+}
+
+function DecayPlot({ sabine, eyring }: { sabine: number; eyring: number }) {
+  const left = 52;
+  const top = 25;
+  const width = 430;
+  const height = 190;
+  const timeMax = Math.max(1, Math.max(sabine, eyring) * 1.12);
+  const point = (time: number) => `${left + Math.min(time, timeMax) / timeMax * width} ${top + height}`;
+  const yTicks = [0, 20, 40, 60];
+  return <section className="decay-lab-panel glass-panel" aria-label="Predicted energy decay curve">
+    <div className="lab-panel-heading">
+      <div><span className="lab-kicker"><Activity size={13} /> PREDICTED ENERGY DECAY</span><h2>Two models, one room</h2></div>
+      <span className="model-tag">DIFFUSE-FIELD ESTIMATE</span>
+    </div>
+    <svg className="lab-decay-plot" viewBox="0 0 520 270" role="img" aria-label={`Predicted decay curves: Sabine ${sabine.toFixed(2)} seconds, Eyring ${eyring.toFixed(2)} seconds.`}>
+      {yTicks.map((tick) => {
+        const y = top + tick / 60 * height;
+        return <g key={tick}><line x1={left} x2={left + width} y1={y} y2={y} className="plot-grid" /><text x="6" y={y + 4}>{tick === 0 ? '0 dB' : `−${tick}`}</text></g>;
+      })}
+      <line x1={left} x2={left} y1={top} y2={top + height} className="plot-axis" />
+      <line x1={left} x2={left + width} y1={top + height} y2={top + height} className="plot-axis" />
+      <path d={`M ${left} ${top} L ${point(sabine)}`} className="sabine-curve" />
+      <path d={`M ${left} ${top} L ${point(eyring)}`} className="eyring-curve" />
+      <circle cx={left + Math.min(sabine, timeMax) / timeMax * width} cy={top + height} r="4" className="sabine-dot" />
+      <circle cx={left + Math.min(eyring, timeMax) / timeMax * width} cy={top + height} r="4" className="eyring-dot" />
+      <text x={left} y="243">0 s</text>
+      <text x={left + width - 28} y="243">{timeMax.toFixed(1)} s</text>
+      <text x={left + width / 2 - 20} y="263">TIME</text>
+    </svg>
+    <div className="decay-legend"><span><i className="legend-swatch sabine-swatch" />Sabine</span><span><i className="legend-swatch eyring-swatch" />Eyring</span><span className="legend-note">−60 dB endpoint marks each estimate</span></div>
+  </section>;
+}
+
+function RoomLab() {
+  const [room, setRoom] = useState<RoomSettings>(initialRoom);
+  const [pulse, setPulse] = useState(0);
+  const results = useMemo(() => calculateRoom(room), [room]);
+  const updateRoom = <K extends keyof RoomSettings>(key: K, value: RoomSettings[K]) => {
+    setRoom((current) => ({ ...current, [key]: value }));
+  };
+  const applyPreset = (preset: typeof roomPresets[number]) => {
+    setRoom((current) => ({ ...current, ...preset.settings }));
+  };
+
+  return <Shell><div className="page-wrap lab-page">
+    <PageHeading index="02" label="INTERACTIVE ROOM LAB" title={<>Change the room.<br /><em>Watch it decay.</em></>} intro="Adjust the room, its surfaces, and the frequency band. The absorption model recalculates RT60 estimates and redraws the predicted energy decay as you go." />
+    <div className="lab-layout">
+      <aside className="lab-controls glass-panel" aria-label="Room simulation controls">
+        <div className="lab-panel-heading">
+          <div><span className="lab-kicker"><SlidersHorizontal size={13} /> ROOM SETUP</span><h2>Parameters</h2></div>
+          <button className="reset-button" type="button" onClick={() => setRoom(initialRoom)} aria-label="Reset room parameters"><RotateCcw size={15} /></button>
+        </div>
+        <div className="preset-row" aria-label="Room presets">
+          {roomPresets.map((preset) => <button type="button" key={preset.label} onClick={() => applyPreset(preset)}>{preset.label}</button>)}
+        </div>
+        <div className="lab-control-group">
+          <h3>Room dimensions <span>metres</span></h3>
+          <RangeControl label="Length" value={room.length} min={3} max={25} step={0.5} unit="m" onChange={(value) => updateRoom('length', value)} />
+          <RangeControl label="Width" value={room.width} min={3} max={20} step={0.5} unit="m" onChange={(value) => updateRoom('width', value)} />
+          <RangeControl label="Height" value={room.height} min={2.2} max={12} step={0.1} unit="m" onChange={(value) => updateRoom('height', value)} />
+        </div>
+        <div className="lab-control-group">
+          <h3>Frequency band</h3>
+          <div className="frequency-options" role="group" aria-label="Frequency band">
+            {frequencyBands.map((frequency) => <button type="button" key={frequency} aria-pressed={room.frequency === frequency} onClick={() => updateRoom('frequency', frequency)}>{frequency >= 1000 ? `${frequency / 1000}k` : frequency}</button>)}
+          </div>
+        </div>
+        <div className="lab-control-group surface-controls">
+          <h3>Surface materials <span>absorption varies by band</span></h3>
+          <MaterialSelect label="Walls" value={room.walls} choices={materialChoices.walls} onChange={(value) => updateRoom('walls', value)} />
+          <MaterialSelect label="Floor" value={room.floor} choices={materialChoices.floor} onChange={(value) => updateRoom('floor', value)} />
+          <MaterialSelect label="Ceiling" value={room.ceiling} choices={materialChoices.ceiling} onChange={(value) => updateRoom('ceiling', value)} />
+        </div>
+        <p className="material-note">Material absorption coefficients are illustrative octave-band values. Actual performance varies with product, mounting, and room construction.</p>
+      </aside>
+
+      <div className="lab-results">
+        <section className="room-card glass-panel">
+          <div className="lab-panel-heading">
+            <div><span className="lab-kicker">ROOM RESPONSE / {room.frequency} HZ</span><h2>Energy leaves at the surfaces</h2></div>
+            <span className="live-label"><i /> LIVE MODEL</span>
+          </div>
+          <RoomVisual room={room} bandIndex={results.bandIndex} pulse={pulse} onPing={() => setPulse((current) => current + 1)} />
+          <div className="room-stats">
+            <div><span>VOLUME</span><b>{results.volume.toFixed(0)} <small>m³</small></b></div>
+            <div><span>TOTAL AREA</span><b>{results.surfaceArea.toFixed(0)} <small>m²</small></b></div>
+            <div><span>MEAN α</span><b>{results.meanAbsorption.toFixed(2)}</b></div>
+          </div>
+        </section>
+
+        <div className="rt-result-grid" aria-live="polite">
+          <article className="rt-result-card glass-panel"><span>SABINE RT60</span><b>{results.sabine.toFixed(2)}<small> s</small></b><p>0.161 × volume ÷ equivalent absorption area</p></article>
+          <article className="rt-result-card glass-panel"><span>EYRING RT60</span><b>{results.eyring.toFixed(2)}<small> s</small></b><p>Diffuse-field estimate accounting for mean absorption</p></article>
+          <article className="rt-result-card absorption-result glass-panel"><span>EQUIVALENT ABSORPTION</span><b>{results.absorptionArea.toFixed(1)}<small> m² sabin</small></b><p>Surface area × band-specific absorption coefficient</p></article>
+        </div>
+
+        <DecayPlot sabine={results.sabine} eyring={results.eyring} />
+        <p className="lab-model-note"><CircleHelp size={15} /><span>This is a live Sabine/Eyring estimate, not a wave-field solver or a measured room response. It assumes a diffuse sound field and omits air absorption, geometry effects, and real-world measurement noise.</span></p>
+      </div>
+    </div>
+    <div className="next-page"><span>HOW THE REAL ESTIMATE IS MADE</span><Link href="/method">Follow the measurement chain <ArrowRight size={16} /></Link></div>
+  </div></Shell>;
+}
+
 const methodSteps = [
   { title: 'Configure', label: '01 · SET PARAMETERS', icon: CircuitBoard, detail: 'Set the sweep span and duration, sample rate, overlap-add block length, and numeric representation. In the report pseudocode: 20 Hz–20 kHz, 48 kHz sampling, and configurable block length.', spec: 'f₁ = 20 Hz  ·  f₂ = 20 kHz  ·  fₛ = 48 kHz', equation: 'R = ln(f₂ / f₁)' },
   { title: 'Excite & record', label: '02 · CAPTURE', icon: AudioLines, detail: 'Generate an exponential sine sweep whose instantaneous frequency rises logarithmically. A loudspeaker excites the room; a MEMS microphone and ADC capture the response y[n].', spec: 'ESS · logarithmic frequency trajectory', equation: 'x(t) = sin(2π f₁ T / R · (eᴿᵗ⁄ᵀ − 1))' },
@@ -157,7 +402,7 @@ function Method() {
   const [active, setActive] = useState(0);
   const StepIcon = methodSteps[active].icon;
   return <Shell><div className="page-wrap">
-    <PageHeading index="02" label="METHOD" title={<>From a sweep<br />to a <em>decay time.</em></>} intro="A transparent signal path: excite the room, recover its impulse response, trace the energy decay, and estimate the slope. Each stage is a place where implementation choices matter." />
+    <PageHeading index="03" label="METHOD" title={<>From a sweep<br />to a <em>decay time.</em></>} intro="A transparent signal path: excite the room, recover its impulse response, trace the energy decay, and estimate the slope. Each stage is a place where implementation choices matter." />
     <section className="method-interactive">
       <div className="method-sidebar"><Eyebrow>PIPELINE / SELECT A STAGE</Eyebrow>{methodSteps.map((s, i) => <button key={s.title} onClick={() => setActive(i)} className={`method-tab ${i === active ? 'method-tab-active' : ''}`} aria-pressed={i === active}><span>{String(i + 1).padStart(2, '0')}</span><b>{s.title}</b><ArrowRight size={14} /></button>)}
         <div className="pipeline-path"><div className="pipeline-node">ROOM</div><div className="pipeline-wire" /><div className="pipeline-node pipeline-node-active">DSP</div><div className="pipeline-wire" /><div className="pipeline-node">RT60</div></div>
@@ -198,7 +443,7 @@ const hypotheses = [
 
 function Research() {
   return <Shell><div className="page-wrap">
-    <PageHeading index="03" label="RESEARCH" title={<>Where the number<br />meets the <em>machine.</em></>} intro="A research question at the seam between room acoustics and embedded arithmetic. The report’s opening frames objectives and hypotheses; later sections report Python simulation results. Both stages matter—and they are not the same evidence." />
+    <PageHeading index="04" label="RESEARCH" title={<>Where the number<br />meets the <em>machine.</em></>} intro="A research question at the seam between room acoustics and embedded arithmetic. The report’s opening frames objectives and hypotheses; later sections report Python simulation results. Both stages matter—and they are not the same evidence." />
     <StatusCallout />
     <section className="research-gap"><div className="research-section-label"><Eyebrow>THE GAP / 03 ABSENCES</Eyebrow><h2 className="display-subtitle">What the literature<br />doesn’t measure.</h2></div><div className="gap-list">
       <article><span>01</span><div><h3>Block length & word length</h3><p>The survey identifies no paper that varies these digital implementation parameters while reporting their effect on a measured acoustic quantity.</p></div></article>
@@ -228,7 +473,7 @@ function Contributions() {
     ['04', 'Simulation evidence—with boundaries', 'The report’s later section presents Python simulation tables for a synthetic reference and multiple room-like cases. The report also begins by defining aims and hypotheses. The website does not infer real-room performance from those simulations.'],
   ];
   return <Shell><div className="page-wrap">
-    <PageHeading index="04" label="CONTRIBUTIONS" title={<>An instrument<br />for <em>looking closer.</em></>} intro="The project’s planned contribution is to make the numerical assumptions in room-acoustics measurement visible. The report also includes simulation-based outcomes; neither should be mistaken for live-room evidence." />
+    <PageHeading index="05" label="CONTRIBUTIONS" title={<>An instrument<br />for <em>looking closer.</em></>} intro="The project’s planned contribution is to make the numerical assumptions in room-acoustics measurement visible. The report also includes simulation-based outcomes; neither should be mistaken for live-room evidence." />
     <StatusCallout />
     <section className="contribution-layout"><div className="contribution-main"><Eyebrow>PLANNED CONTRIBUTIONS</Eyebrow><h2 className="display-subtitle">Make the invisible<br />part of the measurement visible.</h2><div className="contribution-list">{contributions.map(([n, title, copy]) => <article key={n}><span>{n}</span><div><h3>{title}</h3><p>{copy}</p></div></article>)}</div></div><aside className="scope-card"><div className="scope-top"><span>PROJECT STATUS</span><FileText size={18} /></div><h3>Two framings<br />in one report.</h3><p>Sections 1–5 introduce the research gap, objectives, proposed solution, and hypotheses. Later sections present implemented Python simulations, result tables, and a conclusion that describes findings.</p><p>This presentation keeps both visible. Simulation results are reported as such; live-room measurements and independent verification are not claimed.</p><div className="scope-divider" /><span className="font-mono">EVIDENCE TYPE</span><b>SIMULATED / REPORT-DERIVED</b></aside></section>
     <section className="team-section"><div className="team-heading"><Eyebrow>THE TEAM / BATCH B2</Eyebrow><h2 className="display-subtitle">Three names.<br />One research project.</h2><p>Students listed on the source report. No roles are assigned here because the report does not specify individual responsibilities.</p></div><div className="team-list">{['Nihira Pulliwar', 'Vishal Rathod', 'Pranav Sapkale'].map((name, i) => <div className="team-member" key={name}><span className="team-index">0{i + 1}</span><span className="team-avatar">{name.split(' ').map(part => part[0]).join('')}</span><span className="team-name">{name}</span><span className="team-note">STUDENT RESEARCHER</span></div>)}</div></section>
@@ -238,7 +483,7 @@ function Contributions() {
 }
 
 function Router() {
-  return <RoutedErrorBoundary><Switch><Route path="/" component={Overview} /><Route path="/method" component={Method} /><Route path="/research" component={Research} /><Route path="/contributions" component={Contributions} /><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Switch><Route path="/" component={Overview} /><Route path="/lab" component={RoomLab} /><Route path="/method" component={Method} /><Route path="/research" component={Research} /><Route path="/contributions" component={Contributions} /><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
 }
 function RoutedErrorBoundary({ children }: { children: ReactNode }) { const [location] = useLocation(); return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>; }
 function App() {
